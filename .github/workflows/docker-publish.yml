@@ -72,18 +72,18 @@ jobs:
           # GHCR 镜像路径必须全小写
           owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
           image="ghcr.io/${owner}/web-renamer"
-          tags="${image}:sha-${SHA:0:7}"
+          tags=("${image}:sha-${SHA:0:7}")
           if [ "$EVENT" = "workflow_dispatch" ] && [ -n "$INPUT_TAG" ]; then
-            tags="${image}:${INPUT_TAG}"
+            tags+=("${image}:${INPUT_TAG}")
           elif [ "$REF" = "refs/heads/main" ]; then
-            tags="${image}:latest"
+            tags+=("${image}:latest")
           elif [ -n "$REF_NAME" ]; then
-            tags="${image}:${REF_NAME}"
+            tags+=("${image}:${REF_NAME}")
           fi
           {
             echo "image=${image}"
             echo "tags<<EOF"
-            printf '%s\n' "$tags"
+            printf '%s\n' "${tags[@]}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
