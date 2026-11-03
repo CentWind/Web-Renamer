@@ -4,7 +4,6 @@ import type {
   AppConfig,
   AuthMe,
   AuthStatus,
-  BrowseEntry,
   BrowseResult,
   Journal,
   PlanResult,
@@ -23,6 +22,15 @@ export interface Toast {
   id: string;
   kind: ToastKind;
   message: string;
+}
+
+/** 可以加入待处理列表的条目（浏览条目或扫描结果） */
+export interface AddableEntry {
+  path: string;
+  name: string;
+  size: number;
+  /** 展示路径；缺省时回退为文件名 */
+  display?: string;
 }
 
 let toastSeq = 0;
@@ -47,6 +55,8 @@ interface State {
   browse: BrowseResult | null;
   browsing: boolean;
   loadingDir: string | null;
+  /** 正在递归扫描目录 */
+  scanningDirectory: boolean;
 
   queue: QueueItem[];
   rules: Rule[];
@@ -73,7 +83,9 @@ interface State {
   }) => Promise<{ ok: boolean; error?: string }>;
   handleUnauthorized: () => void;
   navigate: (path?: string) => Promise<void>;
-  addEntries: (entries: BrowseEntry[]) => void;
+  addEntries: (entries: AddableEntry[]) => void;
+  /** 递归扫描目录（含所有子目录）并加入待处理列表，返回新增文件数 */
+  addDirectory: (targetPath?: string) => Promise<number>;
   removeFromQueue: (path: string) => void;
   clearQueue: () => void;
 
@@ -119,6 +131,7 @@ export const useStore = create<State>((set, get) => ({
   browse: null,
   browsing: false,
   loadingDir: null,
+  scanningDirectory: false,
 
   queue: [],
   rules: [],
@@ -244,15 +257,44 @@ export const useStore = create<State>((set, get) => ({
     const { queue } = get();
     const map = new Map(queue.map((q) => [q.path, q]));
     for (const e of entries) {
-      if (e.dir) continue;
       map.set(e.path, {
         path: e.path,
         name: e.name,
         size: e.size,
         dir: e.path.slice(0, Math.max(0, e.path.length - e.name.length - 1)),
+        display: e.display ?? e.name,
       });
     }
     set({ queue: [...map.values()] });
+  },
+
+  async addDirectory(targetPath) {
+    const path = targetPath ?? get().browse?.path ?? get().config?.roots[0]?.path;
+    if (!path) return 0;
+    if (get().scanningDirectory) return 0;
+    set({ scanningDirectory: true });
+    try {
+      const res = await api.scan(path, { recursive: true });
+      if (res.files.length === 0) {
+        get().toast('info', '该目录及子目录下没有可添加的文件');
+        return 0;
+      }
+      get().addEntries(res.files);
+      const extra: string[] = [];
+      if (res.hiddenSkipped > 0) extra.push(`${res.hiddenSkipped} 个隐藏文件未添加`);
+      if (res.skipped > 0) extra.push(`${res.skipped} 个符号链接/无法访问的文件已跳过`);
+      if (res.truncated) extra.push(`已达 ${res.limit} 个上限，请分批处理`);
+      get().toast(
+        'success',
+        `已递归添加 ${res.files.length} 个文件${extra.length ? `（${extra.join('，')}）` : ''}`,
+      );
+      return res.files.length;
+    } catch (e: any) {
+      get().toast('error', `扫描目录失败：${e.message}`);
+      return 0;
+    } finally {
+      set({ scanningDirectory: false });
+    }
   },
 
   removeFromQueue(path) {
@@ -349,11 +391,24 @@ export const useStore = create<State>((set, get) => ({
       } else {
         get().toast('success', `已重命名 ${res.renamed.length} 个文件`);
       }
-      // 刷新队列与目录
+      // 刷新队列与目录（保留展示路径，重命名只改文件名）
+      const previous = new Map(queue.map((q) => [q.path, q]));
       set({
         queue: res.renamed.map((r) => {
           const name = r.to.split(/[\\/]/).pop() ?? r.to;
-          return { path: r.to, name, size: 0, dir: r.to.slice(0, r.to.length - name.length - 1) };
+          const old = previous.get(r.from);
+          const oldName = old?.name ?? '';
+          const display =
+            old?.display && oldName && old.display.endsWith(oldName)
+              ? old.display.slice(0, -oldName.length) + name
+              : name;
+          return {
+            path: r.to,
+            name,
+            size: old?.size ?? 0,
+            dir: r.to.slice(0, Math.max(0, r.to.length - name.length - 1)),
+            display,
+          };
         }),
       });
       await get().navigate(get().browse?.path);

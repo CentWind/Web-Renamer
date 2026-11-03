@@ -1,0 +1,100 @@
+# Web ReNamer · 自定义 Fork
+
+本仓库是 [aaron2024S/web-renamer](https://github.com/aaron2024S/web-renamer)（MIT）的 fork，用于在 NAS / 自托管环境下做独立增强。
+
+- 上游：`upstream` remote（保留完整 git 历史，可随时同步）
+- 自定义开发分支：`custom`
+- 版本：v1.1.0
+
+## 相对上游的改动
+
+### 1. 递归添加目录（核心需求）
+
+上游只能「添加当前目录下的文件」；本 fork 支持**一次添加某个目录及其所有子目录下的文件**：
+
+- 后端新增 `server/src/scan.ts` 与 `POST /api/scan`
+  - 递归遍历（迭代式 DFS，深层目录不爆栈）
+  - 跳过符号链接与特殊文件（防目录成环 / 逃逸白名单根目录）
+  - 默认跳过隐藏文件（`.` 开头），API 支持 `includeHidden: true`
+  - 单次扫描上限 20000 个文件（可传 `limit`，上限 50000），超限返回 `truncated`
+  - 结果按相对路径稳定排序，返回 `rel` 与展示路径 `display`
+- 前端
+  - 浏览工具栏新增「**含子目录**」按钮：递归添加当前目录
+  - 目录行悬停出现「添加此目录及所有子目录」按钮：无需进入目录即可递归添加
+  - 「待处理」列表显示文件相对路径（同名文件可区分）
+  - 预览表「原文件名」下方显示所在子目录
+- 测试
+  - `server/src/smoke.ts` 新增第 12 组：递归 / 隐藏文件 / 符号链接 / 上限截断 / 跨目录同名不冲突 / 改名与撤销
+
+### 2. 构建与发布
+
+- `.github/workflows/docker-publish.yml` 改为 **GitHub Actions + GHCR 自动构建**：
+  - push 到 `main` / `custom` 分支或 `v*` 标签时自动构建 `linux/amd64,linux/arm64` 双架构镜像
+  - 推送至 `ghcr.io/<仓库所有者小写>/web-renamer:<latest|分支名|版本号|sha-xxxxxxx>`
+  - 无需 Docker Hub 账号，使用仓库自带 `GITHUB_TOKEN`（需在 Settings → Actions → General 把 Workflow permissions 设为 Read and write）
+  - 也支持手动 `workflow_dispatch`（可只构建不推送）
+- 版本号提升到 1.1.0
+
+## 本地开发
+
+```bash
+npm install
+npm run dev        # 后端 7582 + 前端 5173
+npm run smoke      # 规则引擎 / 扫描 / 执行 / 撤销冒烟测试
+npm run build      # 构建前端与后端
+```
+
+> 仓库里的 `package-lock.json` 由上游生成，未包含各平台的可选原生依赖（rollup/esbuild/lightningcss）。
+> 若在本地 `npm ci` 后构建报 `Cannot find module '@rollup/rollup-linux-x64-gnu'` 之类错误，执行
+> `rm -rf node_modules package-lock.json && npm install` 重新生成即可（Dockerfile 不复制 lockfile，不受影响）。
+
+## 本地构建镜像
+
+```bash
+docker build -t web-renamer:custom .
+docker run --rm -p 7582:7582 \
+  -e PUID=1000 -e PGID=1000 -e TZ=Asia/Shanghai \
+  -v /path/to/data:/data \
+  -v /path/to/config:/config \
+  web-renamer:custom
+```
+
+## 发布到你自己的 GitHub + GHCR
+
+1. 在 GitHub 新建一个**空仓库**（建议 public；私有仓库也能构建，但 NAS 拉取需要 `docker login`），不要勾选初始化 README。
+2. 添加远程并推送（本仓库已把 `origin` 改名为 `upstream`）：
+
+   ```bash
+   git remote add origin git@github.com:<你的用户名>/web-renamer.git
+   git push -u origin custom:main
+   ```
+
+3. 仓库 **Settings → Actions → General → Workflow permissions** 选择 **Read and write permissions**（GHCR 推送需要）。
+4. push 后自动触发构建，完成后在仓库 **Actions** 页查看；镜像地址：
+   `ghcr.io/<你的用户名小写>/web-renamer:latest`
+5. 首次构建后到 **Packages** → `web-renamer` → **Package settings** → 把可见性改为 **Public**（NAS 免登录拉取）。
+   若保持私有，在 NAS 上执行：`docker login ghcr.io -u <用户名> -p <具有 read:packages 权限的 PAT>`。
+6. NAS 的 compose 里把镜像改成：
+
+   ```yaml
+   image: ghcr.io/<你的用户名小写>/web-renamer:latest
+   ```
+
+7. 发版：`git tag v1.1.0 && git push origin v1.1.0`，会额外构建 `1.1.0` 标签。
+
+## 同步上游
+
+```bash
+git fetch upstream
+git merge upstream/main        # 本地 main 跟随上游
+git checkout custom
+git merge main                 # 把上游更新合并进自定义分支
+npm run smoke                  # 回归测试
+```
+
+## 已知限制
+
+- 递归扫描单次上限 20000 个文件；超过请分批处理
+- 默认跳过隐藏文件与符号链接（API 支持 `includeHidden`，前端暂未提供开关）
+- 仍然只处理文件，不处理文件夹本身
+- 上游项目为 v1.0.1 快照，代码结构与 API 契约保持兼容，方便后续同步

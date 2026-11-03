@@ -46,6 +46,10 @@ export interface PlanItem {
   dstName: string;
   status: PlanStatus;
   reason?: string;
+  /** 展示用路径（含根目录名），例如 photos/2024/01/a.jpg */
+  srcDisplay?: string;
+  /** 目标文件的展示用路径 */
+  dstDisplay?: string;
 }
 
 export interface PlanSummary {
@@ -73,6 +77,8 @@ export interface ApplyResult {
 export interface BrowseEntry {
   name: string;
   path: string;
+  /** 展示路径（含根目录名） */
+  display: string;
   dir: boolean;
   size: number;
   mtime: number;
@@ -179,4 +185,32 @@ export interface QueueItem {
   name: string;
   size: number;
   dir: string;
+  /** 展示路径（含子目录），例如 photos/2024/01/a.jpg */
+  display: string;
+}
+
+/* --------------------------- 目录扫描（递归添加） --------------------------- */
+
+export interface ScanFile {
+  path: string;
+  name: string;
+  /** 相对扫描目录的路径，例如 2024/01/a.jpg */
+  rel: string;
+  size: number;
+  mtime: number;
+  display: string;
+}
+
+export interface ScanResult {
+  path: string;
+  display: string;
+  recursive: boolean;
+  includeHidden: boolean;
+  limit: number;
+  files: ScanFile[];
+  /** 跳过的符号链接 / 特殊文件 / 无权限条目数 */
+  skipped: number;
+  /** 因隐藏而未添加的条目数 */
+  hiddenSkipped: number;
+  truncated: boolean;
 }

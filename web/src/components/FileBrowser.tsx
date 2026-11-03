@@ -8,6 +8,7 @@ import {
   File as FileIcon,
   FilePlus2,
   Folder,
+  FolderDown,
   FolderOpen,
   ListFilter,
   Trash2,
@@ -15,18 +16,26 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store';
 import { Empty, Spinner } from './ui';
-import { formatBytes, formatTime } from '../lib/format';
+import { formatBytes } from '../lib/format';
 
 export function FileBrowser() {
   const browse = useStore((s) => s.browse);
   const browsing = useStore((s) => s.browsing);
   const navigate = useStore((s) => s.navigate);
   const addEntries = useStore((s) => s.addEntries);
+  const addDirectory = useStore((s) => s.addDirectory);
+  const scanningDirectory = useStore((s) => s.scanningDirectory);
   const queue = useStore((s) => s.queue);
   const removeFromQueue = useStore((s) => s.removeFromQueue);
   const clearQueue = useStore((s) => s.clearQueue);
   const [showHidden, setShowHidden] = useState(false);
   const [tab, setTab] = useState<'browse' | 'queue'>('browse');
+
+  /** 递归添加目录（含子目录）后切到「待处理」查看结果 */
+  const addFolderRecursive = async (targetPath?: string) => {
+    const added = await addDirectory(targetPath);
+    if (added > 0) setTab('queue');
+  };
 
   const queued = useMemo(() => new Set(queue.map((q) => q.path)), [queue]);
   const entries = (browse?.entries ?? []).filter((e) => showHidden || !e.hidden);
@@ -84,10 +93,18 @@ export function FileBrowser() {
             <button
               className="btn btn-sm"
               disabled={filesInDir.length === 0}
-              title="把当前目录下的所有文件加入列表"
+              title="只把当前目录下的文件加入列表（不含子目录）"
               onClick={() => addEntries(filesInDir)}
             >
-              <FilePlus2 size={13} /> 全部添加
+              <FilePlus2 size={13} /> 当前目录
+            </button>
+            <button
+              className="btn btn-sm btn-primary"
+              disabled={!browse || scanningDirectory}
+              title="添加当前目录及所有子目录下的文件"
+              onClick={() => void addFolderRecursive(browse?.path)}
+            >
+              {scanningDirectory ? <Spinner size={13} /> : <FolderDown size={13} />} 含子目录
             </button>
           </div>
 
@@ -118,6 +135,19 @@ export function FileBrowser() {
                         {!e.dir && (
                           <span className="muted mono flex-none text-[11px]">{formatBytes(e.size)}</span>
                         )}
+                        {e.dir && (
+                          <button
+                            className="icon-btn h-6 w-6 flex-none opacity-0 group-hover:opacity-100"
+                            title="添加此目录及所有子目录下的文件"
+                            disabled={scanningDirectory}
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              void addFolderRecursive(e.path);
+                            }}
+                          >
+                            <FolderDown size={13} />
+                          </button>
+                        )}
                         {inQueue && <CheckSquare size={14} style={{ color: 'var(--accent)' }} className="flex-none" />}
                       </div>
                     </li>
@@ -143,7 +173,7 @@ export function FileBrowser() {
               <Empty
                 icon={<FilePlus2 size={26} />}
                 title="还没有待处理的文件"
-                hint="在「浏览」里点击文件或目录里的「全部添加」把它们加进来。"
+                hint="在「浏览」里点击单个文件、点「当前目录」，或点目录右侧的按钮把整个目录（含子目录）加进来。"
               />
             ) : (
               <ul className="p-1.5">
@@ -155,8 +185,8 @@ export function FileBrowser() {
                         <div className="truncate text-[13px]" title={q.path}>
                           {q.name}
                         </div>
-                        <div className="muted truncate text-[11px]">
-                          {formatBytes(q.size)} · {formatTime(Date.now())}
+                        <div className="muted truncate text-[11px]" title={q.display || q.path}>
+                          {formatBytes(q.size)} · {q.display || q.path}
                         </div>
                       </div>
                       <button className="icon-btn h-6 w-6 opacity-0 group-hover:opacity-100" onClick={() => removeFromQueue(q.path)}>

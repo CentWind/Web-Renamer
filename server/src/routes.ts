@@ -23,6 +23,7 @@ import { buildPlan } from './rename/planner.js';
 import { applyPlan, undoJournal } from './rename/executor.js';
 import { extractMeta } from './rules/meta.js';
 import { getWatchState, updateWatcherConfig } from './watcher.js';
+import { ScanError, scanDirectory } from './scan.js';
 import type { Rule, RuleSet, WatchConfig } from './types.js';
 
 const rulesSchema = z.array(z.any());
@@ -94,6 +95,7 @@ export async function registerRoutes(app: FastifyInstance, config: AppConfig): P
       return {
         name: d.name,
         path: full,
+        display: displayPath(full, config.roots),
         dir: d.isDirectory(),
         size,
         mtime,
@@ -110,6 +112,25 @@ export async function registerRoutes(app: FastifyInstance, config: AppConfig): P
       parent: isInsideRoot(parent, config.roots) && parent !== dir ? parent : null,
       entries,
     };
+  });
+
+  /**
+   * 递归扫描目录，把目录（含所有子目录）下的文件一次性加入待处理列表。
+   * 只读操作；跳过符号链接与特殊文件。
+   */
+  app.post('/api/scan', async (req, reply) => {
+    const body = (req.body ?? {}) as { path?: string; recursive?: boolean; includeHidden?: boolean; limit?: number };
+    try {
+      return scanDirectory(body.path ?? config.roots[0], config.roots, {
+        recursive: body.recursive,
+        includeHidden: body.includeHidden,
+        limit: body.limit,
+      });
+    } catch (e: any) {
+      const status = e instanceof ScanError ? e.status : 500;
+      if (status === 500) app.log.error(e);
+      return reply.code(status).send({ error: e?.message ?? '扫描目录失败' });
+    }
   });
 
   app.get('/api/meta', async (req, reply) => {

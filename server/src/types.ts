@@ -53,6 +53,10 @@ export interface PlanItem {
   dstName: string;
   status: PlanStatus;
   reason?: string;
+  /** 展示用路径（含根目录名），例如 photos/2024/01/a.jpg */
+  srcDisplay?: string;
+  /** 目标文件的展示用路径 */
+  dstDisplay?: string;
 }
 
 export interface JournalEntry {

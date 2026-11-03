@@ -33,6 +33,13 @@ const STATUS_META: Record<PlanStatus, { label: string; tone: 'default' | 'ok' | 
   skipped: { label: '已跳过', tone: 'default', icon: MinusCircle },
 };
 
+/** 取展示路径的目录部分，例如 photos/2024/01/a.jpg → photos/2024/01 */
+function parentOfDisplay(display?: string): string {
+  if (!display) return '';
+  const i = display.lastIndexOf('/');
+  return i > 0 ? display.slice(0, i) : '';
+}
+
 function PreviewTab() {
   const preview = useStore((s) => s.preview);
   const previewing = useStore((s) => s.previewing);
@@ -94,8 +101,15 @@ function PreviewTab() {
                   className="row-hover border-b"
                   style={{ borderColor: 'var(--border)' }}
                 >
-                  <td className="mono max-w-0 truncate px-3 py-2" title={it.srcName}>
-                    {it.srcName}
+                  <td className="max-w-0 px-3 py-2">
+                    <div className="mono truncate" title={it.src}>
+                      {it.srcName}
+                    </div>
+                    {parentOfDisplay(it.srcDisplay) && (
+                      <div className="muted truncate text-[10.5px]" title={it.srcDisplay}>
+                        {parentOfDisplay(it.srcDisplay)}
+                      </div>
+                    )}
                   </td>
                   <td className="max-w-0 px-3 py-2">
                     <div className="flex items-center gap-2">

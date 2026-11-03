@@ -1,6 +1,6 @@
 /**
  * 规则引擎 / 执行器冒烟测试：node --import tsx src/smoke.ts
- * 覆盖：基础规则、序列号、仅改大小写、交换（成环）、冲突检测、撤销。
+ * 覆盖：基础规则、序列号、仅改大小写、交换（成环）、冲突检测、撤销、递归扫描目录。
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,6 +9,7 @@ import assert from 'node:assert';
 import { initDb, getJournal, markJournalUndone } from './db.js';
 import { buildPlan } from './rename/planner.js';
 import { applyPlan, undoJournal } from './rename/executor.js';
+import { scanDirectory } from './scan.js';
 import type { PlanItem, Rule } from './types.js';
 import type { RuleType } from './types.js';
 
@@ -300,6 +301,88 @@ async function main() {
     assert.strictEqual(p12.items[0].dstName, 'name.txt');
 
     ok('remove/last、replace/last、insert 锚点、$-1、letters/roman 编号、追加扩展名、strip 位置、括号清理、去零、用户输入、区间删到末尾');
+  }
+
+  /* ---------- 12. 递归扫描目录（本次 fork 的新增能力） ---------- */
+  console.log('12) 递归扫描目录（含子目录 / 隐藏文件 / 符号链接 / 上限 / 跨目录重命名）');
+  {
+    const { dir, roots } = await newWorkspace();
+    fs.mkdirSync(path.join(dir, 'a', 'b'), { recursive: true });
+    fs.mkdirSync(path.join(dir, '.hiddenDir'), { recursive: true });
+    touch(dir, 'root.txt', '.hidden.txt');
+    touch(path.join(dir, 'a'), 'x.txt');
+    touch(path.join(dir, 'a', 'b'), 'y.txt');
+    touch(path.join(dir, '.hiddenDir'), 'h.txt');
+
+    // 非递归：只收集当前目录下的文件
+    const nonRecursive = scanDirectory(dir, roots, { recursive: false });
+    assert.deepStrictEqual(nonRecursive.files.map((f) => f.rel), ['root.txt']);
+
+    // 递归 + 默认跳过隐藏文件；结果按相对路径稳定排序
+    const rec = scanDirectory(dir, roots);
+    assert.deepStrictEqual(rec.files.map((f) => f.rel).sort(), ['a/b/y.txt', 'a/x.txt', 'root.txt'].sort());
+    assert.strictEqual(rec.hiddenSkipped, 2, '应记下 1 个隐藏文件 + 1 个隐藏目录');
+    assert.strictEqual(rec.truncated, false);
+    // 展示路径带根目录名，便于前端区分
+    assert.strictEqual(rec.files[0].display.split('/')[0], path.basename(dir));
+
+    // 显式包含隐藏文件
+    const withHidden = scanDirectory(dir, roots, { includeHidden: true });
+    assert.deepStrictEqual(
+      withHidden.files.map((f) => f.rel).sort(),
+      ['.hidden.txt', '.hiddenDir/h.txt', 'a/b/y.txt', 'a/x.txt', 'root.txt'].sort(),
+    );
+
+    // 符号链接：跳过，避免逃逸根目录、环和重复收集
+    let linkMade = false;
+    try {
+      fs.symlinkSync(path.join(dir, 'root.txt'), path.join(dir, 'link-to-root.txt'));
+      fs.symlinkSync(path.join(dir, 'a'), path.join(dir, 'link-to-a'));
+      linkMade = true;
+    } catch {
+      /* 某些文件系统/权限下不允许建符号链接，跳过该子测试 */
+    }
+    if (linkMade) {
+      const linked = scanDirectory(dir, roots);
+      assert.ok(!linked.files.some((f) => f.name === 'link-to-root.txt'), '符号链接文件不应被收集');
+      assert.strictEqual(linked.files.filter((f) => f.rel === 'a/x.txt').length, 1, '符号链接目录不应重复收集');
+    }
+
+    // 数量上限
+    const limited = scanDirectory(dir, roots, { limit: 2 });
+    assert.strictEqual(limited.files.length, 2);
+    assert.strictEqual(limited.truncated, true);
+
+    // 跨子目录同名文件：不是冲突（目标仍在各自目录里），且能正常执行 / 撤销
+    fs.mkdirSync(path.join(dir, 'c1'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'c2'), { recursive: true });
+    const f1 = touch(path.join(dir, 'c1'), 'same.txt')[0];
+    const f2 = touch(path.join(dir, 'c2'), 'same.txt')[0];
+    const scanAll = scanDirectory(dir, roots);
+    const same = scanAll.files.filter((f) => f.name === 'same.txt');
+    assert.strictEqual(same.length, 2);
+
+    const plan = await buildPlan(same.map((f) => f.path), [rule('insert', { position: 'prefix', text: 'n_' })], roots);
+    assert.strictEqual(plan.summary.conflict, 0, '不同目录下的同名文件不应互相冲突');
+    assert.strictEqual(plan.summary.canApply, true);
+    assert.strictEqual(plan.items.length, 2);
+    // 预览项的展示路径带上了子目录，前端可区分
+    assert.ok(plan.items.every((i) => i.srcDisplay?.includes('/c1/') || i.srcDisplay?.includes('/c2/')));
+
+    const applied = applyPlan(plan.items, plan.root, true);
+    assert.strictEqual(applied.renamed.length, 2);
+    assert.ok(fs.existsSync(path.join(dir, 'c1', 'n_same.txt')));
+    assert.ok(fs.existsSync(path.join(dir, 'c2', 'n_same.txt')));
+
+    const journal = getJournal(applied.journalId!);
+    assert.ok(journal);
+    const undone = undoJournal(journal!.entries);
+    markJournalUndone(journal!.id);
+    assert.strictEqual(undone.renamed.length, 2);
+    assert.ok(fs.existsSync(path.join(dir, 'c1', 'same.txt')));
+    assert.ok(fs.existsSync(path.join(dir, 'c2', 'same.txt')));
+
+    ok('递归扫描 + 隐藏文件开关 + 符号链接跳过 + 上限截断 + 跨目录同名可正常改名/撤销');
   }
 
   console.log(`\n全部通过：${passed} 项\n`);

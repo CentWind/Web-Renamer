@@ -3,7 +3,7 @@ import path from 'node:path';
 import { applyRules, EvalCtx, RuleError, splitName } from '../rules/engine.js';
 import { extractMeta, rulesNeedMeta } from '../rules/meta.js';
 import type { PlanItem, Rule } from '../types.js';
-import { realpathSafe } from '../paths.js';
+import { displayPath, realpathSafe } from '../paths.js';
 
 const ILLEGAL_NAME = /[<>:"/\\|?*\u0000-\u001f]/;
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
@@ -148,6 +148,12 @@ export async function buildPlan(files: string[], rules: Rule[], roots: string[])
       it.status = 'conflict';
       it.reason = '目标文件已存在';
     }
+  }
+
+  // 展示用路径：让跨子目录的预览能区分同名文件
+  for (const it of items) {
+    it.srcDisplay = displayPath(it.src, roots);
+    it.dstDisplay = displayPath(it.dst, roots);
   }
 
   const summary = {
