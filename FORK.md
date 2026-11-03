@@ -3,7 +3,9 @@
 本仓库是 [aaron2024S/web-renamer](https://github.com/aaron2024S/web-renamer)（MIT）的 fork，用于在 NAS / 自托管环境下做独立增强。
 
 - 上游：`upstream` remote（保留完整 git 历史，可随时同步）
-- 自定义开发分支：`custom`
+- 稳定分支：`main`（跟踪 `origin/main`，构建 `latest` 镜像）
+- 开发分支：`dev`（日常开发集成，构建 `dev` 镜像）
+- 功能分支：`feat/<功能名>`、`fix/<问题>`（从 `dev` 切出，构建 `feat-xxx` 镜像，自测后合并回 `dev`）
 - 版本：v1.1.0
 
 ## 相对上游的改动
@@ -29,7 +31,7 @@
 ### 2. 构建与发布
 
 - `.github/workflows/docker-publish.yml` 改为 **GitHub Actions + GHCR 自动构建**：
-  - push 到 `main` / `custom` 分支或 `v*` 标签时自动构建 `linux/amd64,linux/arm64` 双架构镜像
+  - push 到 `main` / `dev` / `feat/**` / `fix/**` 分支或 `v*` 标签时自动构建 `linux/amd64,linux/arm64` 双架构镜像
   - 推送至 `ghcr.io/<仓库所有者小写>/web-renamer:<latest|分支名|版本号|sha-xxxxxxx>`
   - 无需 Docker Hub 账号，使用仓库自带 `GITHUB_TOKEN`（需在 Settings → Actions → General 把 Workflow permissions 设为 Read and write）
   - 也支持手动 `workflow_dispatch`（可只构建不推送）
@@ -61,35 +63,55 @@ docker run --rm -p 7582:7582 \
 
 ## 发布到你自己的 GitHub + GHCR
 
+> ✅ 已完成：仓库为 <https://github.com/CentWind/Web-Renamer>，镜像为 `ghcr.io/centwind/web-renamer`（公开可拉取）。
+> 以下步骤供换机 / 重建仓库时参考。
+
 1. 在 GitHub 新建一个**空仓库**（建议 public；私有仓库也能构建，但 NAS 拉取需要 `docker login`），不要勾选初始化 README。
-2. 添加远程并推送（本仓库已把 `origin` 改名为 `upstream`）：
+2. 添加远程并推送：
 
    ```bash
-   git remote add origin git@github.com:<你的用户名>/web-renamer.git
-   git push -u origin custom:main
+   git remote add origin git@github.com:CentWind/Web-Renamer.git
+   git push -u origin main
+   git push -u origin dev
    ```
 
 3. 仓库 **Settings → Actions → General → Workflow permissions** 选择 **Read and write permissions**（GHCR 推送需要）。
 4. push 后自动触发构建，完成后在仓库 **Actions** 页查看；镜像地址：
-   `ghcr.io/<你的用户名小写>/web-renamer:latest`
+   `ghcr.io/centwind/web-renamer:latest`
 5. 首次构建后到 **Packages** → `web-renamer` → **Package settings** → 把可见性改为 **Public**（NAS 免登录拉取）。
    若保持私有，在 NAS 上执行：`docker login ghcr.io -u <用户名> -p <具有 read:packages 权限的 PAT>`。
 6. NAS 的 compose 里把镜像改成：
 
    ```yaml
-   image: ghcr.io/<你的用户名小写>/web-renamer:latest
+   image: ghcr.io/centwind/web-renamer:latest
    ```
 
-7. 发版：`git tag v1.1.0 && git push origin v1.1.0`，会额外构建 `1.1.0` 标签。
+7. 发版：`git tag v1.1.0 && git push origin v1.1.0`，会额外构建 `v1.1.0` 标签。
+
+## 分支与发布流程
+
+```
+main（稳定，= 部署分支）
+ └── dev（日常开发集成分支）
+      ├── feat/xxx（新功能）
+      └── fix/xxx（问题修复）
+```
+
+- 新功能：从 `dev` 切 `feat/xxx` → 开发 + 自测 → 合并回 `dev`
+- 修复：从 `dev` 切 `fix/xxx` → 合并回 `dev`
+- 发布：`dev` 稳定后合并到 `main` 并推送 → Actions 自动更新 `latest`
+- 镜像标签：`main` → `latest`；`dev` → `dev`；`feat/xxx` → `feat-xxx`（`/` 会被替换成 `-`）；另有 `sha-<7位>`
+- 功能分支/开发分支的镜像可以用于预览验证，但 NAS 部署请指向 `latest`
 
 ## 同步上游
 
 ```bash
 git fetch upstream
-git merge upstream/main        # 本地 main 跟随上游
-git checkout custom
-git merge main                 # 把上游更新合并进自定义分支
+git checkout dev
+git merge upstream/main        # 把上游更新合并进开发分支
 npm run smoke                  # 回归测试
+# 稳定后再发布：
+git checkout main && git merge --no-ff dev && git push origin main
 ```
 
 ## 已知限制
