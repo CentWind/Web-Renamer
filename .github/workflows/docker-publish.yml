@@ -4,7 +4,7 @@ name: 构建并推送镜像（GHCR）
 # 也可以在 Actions 页面手动触发。
 on:
   push:
-    branches: [main, custom]
+    branches: [main, dev, 'feat/**', 'fix/**']
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -72,13 +72,16 @@ jobs:
           # GHCR 镜像路径必须全小写
           owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
           image="ghcr.io/${owner}/web-renamer"
+          # 分支名可能包含 /（如 feat/xxx），Docker tag 不允许，统一转成 -
+          safe_ref="$(printf '%s' "$REF_NAME" | tr '/ ' '--' | tr -cd 'A-Za-z0-9_.-')"
           tags=("${image}:sha-${SHA:0:7}")
           if [ "$EVENT" = "workflow_dispatch" ] && [ -n "$INPUT_TAG" ]; then
-            tags+=("${image}:${INPUT_TAG}")
+            safe_tag="$(printf '%s' "$INPUT_TAG" | tr '/ ' '--' | tr -cd 'A-Za-z0-9_.-')"
+            tags+=("${image}:${safe_tag:-latest}")
           elif [ "$REF" = "refs/heads/main" ]; then
             tags+=("${image}:latest")
-          elif [ -n "$REF_NAME" ]; then
-            tags+=("${image}:${REF_NAME}")
+          elif [ -n "$safe_ref" ]; then
+            tags+=("${image}:${safe_ref}")
           fi
           {
             echo "image=${image}"
