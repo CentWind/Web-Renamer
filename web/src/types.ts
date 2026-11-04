@@ -46,6 +46,8 @@ export interface PlanItem {
   dstName: string;
   status: PlanStatus;
   reason?: string;
+  /** 是否为文件夹 */
+  isDir?: boolean;
   /** 展示用路径（含根目录名），例如 photos/2024/01/a.jpg */
   srcDisplay?: string;
   /** 目标文件的展示用路径 */
@@ -187,6 +189,8 @@ export interface QueueItem {
   dir: string;
   /** 展示路径（含子目录），例如 photos/2024/01/a.jpg */
   display: string;
+  /** 是否为文件夹 */
+  isDir?: boolean;
 }
 
 /* --------------------------- 目录扫描（递归添加） --------------------------- */
@@ -199,6 +203,8 @@ export interface ScanFile {
   size: number;
   mtime: number;
   display: string;
+  /** 是否为文件夹 */
+  isDir?: boolean;
 }
 
 export interface ScanResult {
@@ -206,6 +212,7 @@ export interface ScanResult {
   display: string;
   recursive: boolean;
   includeHidden: boolean;
+  includeDirs: boolean;
   limit: number;
   files: ScanFile[];
   /** 跳过的符号链接 / 特殊文件 / 无权限条目数 */

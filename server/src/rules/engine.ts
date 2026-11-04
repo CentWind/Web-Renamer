@@ -470,9 +470,20 @@ function withScope(parts: FileParts, scope: Scope, fn: (s: string) => string): F
 
 /* ============================== 主入口 ============================== */
 
-export function applyRule(parts: FileParts, rule: Rule, ctx: EvalCtx): FileParts {
+export interface ApplyOptions {
+  /** 目标是文件夹：没有扩展名概念，扩展名规则跳过，scope=ext 按整体处理 */
+  isDirectory?: boolean;
+}
+
+export function applyRule(parts: FileParts, rule: Rule, ctx: EvalCtx, options: ApplyOptions = {}): FileParts {
   const p = rule.params ?? {};
-  const run = (fn: (s: string) => string) => withScope(parts, rule.scope ?? 'name', fn);
+
+  const isDir = options.isDirectory === true;
+  // 文件夹没有扩展名：跳过扩展名规则；ext 作用域按整体（name）处理
+  if (isDir && rule.type === 'extension') return parts;
+  const scope: Scope = isDir && rule.scope === 'ext' ? 'name' : (rule.scope ?? 'name');
+
+  const run = (fn: (s: string) => string) => withScope(parts, scope, fn);
 
   try {
     switch (rule.type) {
@@ -499,9 +510,9 @@ export function applyRule(parts: FileParts, rule: Rule, ctx: EvalCtx): FileParts
       case 'date':
         return run((s) => applyDate(s, p));
       case 'meta':
-        return withScope(parts, rule.scope ?? 'name', (s) => applyMeta(s, p, ctx));
+        return withScope(parts, scope, (s) => applyMeta(s, p, ctx));
       case 'script':
-        return withScope(parts, rule.scope ?? 'name', (s) => applyScript(s, p, ctx));
+        return withScope(parts, scope, (s) => applyScript(s, p, ctx));
       case 'regex': {
         const pattern = String(p.pattern ?? '');
         const flags = String(p.flags ?? 'g');
@@ -538,7 +549,7 @@ export function applyRule(parts: FileParts, rule: Rule, ctx: EvalCtx): FileParts
         const seq = start + Math.floor((n - 1) / repeat) * step;
         const value = formatNumber(seq, String(p.system ?? 'decimal'), padding);
         const mode = p.mode ?? 'suffix';
-        return withScope(parts, rule.scope ?? 'name', (s) => {
+        return withScope(parts, scope, (s) => {
           if (mode === 'prefix') return value + s;
           if (mode === 'replace') return value;
           if (mode === 'index') {
@@ -559,7 +570,7 @@ export function applyRule(parts: FileParts, rule: Rule, ctx: EvalCtx): FileParts
           .filter(Boolean);
         const line = lines[ctx.index - 1];
         const mode = p.mode ?? 'replace';
-        return withScope(parts, rule.scope ?? 'name', (s) => {
+        return withScope(parts, scope, (s) => {
           if (line === undefined) return s;
           if (mode === 'prefix') return line + s;
           if (mode === 'suffix') return s + line;
@@ -574,12 +585,12 @@ export function applyRule(parts: FileParts, rule: Rule, ctx: EvalCtx): FileParts
   }
 }
 
-/** 依次应用规则，返回新的文件名 */
-export function applyRules(filename: string, rules: Rule[], ctx: EvalCtx): string {
-  let parts = splitName(filename);
+/** 依次应用规则，返回新的文件名（文件夹传 options.isDirectory） */
+export function applyRules(filename: string, rules: Rule[], ctx: EvalCtx, options: ApplyOptions = {}): string {
+  let parts: FileParts = options.isDirectory ? { name: filename, ext: '' } : splitName(filename);
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    parts = applyRule(parts, rule, ctx);
+    parts = applyRule(parts, rule, ctx, options);
   }
   return joinName(parts);
 }

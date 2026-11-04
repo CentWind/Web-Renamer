@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock,
   Eye,
+  Folder,
   History,
   Info,
   MinusCircle,
@@ -102,8 +103,11 @@ function PreviewTab() {
                   style={{ borderColor: 'var(--border)' }}
                 >
                   <td className="max-w-0 px-3 py-2">
-                    <div className="mono truncate" title={it.src}>
-                      {it.srcName}
+                    <div className="flex items-center gap-1" title={it.src}>
+                      {it.isDir && (
+                        <Folder size={11} className="flex-none" style={{ color: 'var(--accent)' }} />
+                      )}
+                      <span className="mono truncate">{it.srcName}</span>
                     </div>
                     {parentOfDisplay(it.srcDisplay) && (
                       <div className="muted truncate text-[10.5px]" title={it.srcDisplay}>
