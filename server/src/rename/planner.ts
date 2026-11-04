@@ -46,8 +46,8 @@ export async function buildPlan(files: string[], rules: Rule[], roots: string[])
   const needMeta = rulesNeedMeta(rules);
   const items: PlanItem[] = [];
 
-  // 校验 + 归一化源路径
-  const valid: { src: string; dir: string }[] = [];
+  // 校验 + 归一化源路径：文件与文件夹都支持；符号链接 / 特殊文件拒绝
+  const valid: { src: string; dir: string; isDir: boolean }[] = [];
   for (const f of files) {
     let src: string;
     try {
@@ -60,21 +60,27 @@ export async function buildPlan(files: string[], rules: Rule[], roots: string[])
         dstName: path.basename(f),
         status: 'invalid',
         reason: e.message,
+        isDir: false,
       });
       continue;
     }
     let stat: fs.Stats;
     try {
-      stat = fs.statSync(src);
+      stat = fs.lstatSync(src);
     } catch {
-      items.push({ src, dst: src, srcName: path.basename(src), dstName: path.basename(src), status: 'invalid', reason: '文件不存在' });
+      items.push({ src, dst: src, srcName: path.basename(src), dstName: path.basename(src), status: 'invalid', reason: '文件或文件夹不存在', isDir: false });
       continue;
     }
-    if (!stat.isFile()) {
-      items.push({ src, dst: src, srcName: path.basename(src), dstName: path.basename(src), status: 'invalid', reason: '不是文件（本工具只处理文件）' });
+    if (stat.isSymbolicLink()) {
+      items.push({ src, dst: src, srcName: path.basename(src), dstName: path.basename(src), status: 'invalid', reason: '不支持符号链接', isDir: false });
       continue;
     }
-    valid.push({ src, dir: path.dirname(src) });
+    const isDir = stat.isDirectory();
+    if (!isDir && !stat.isFile()) {
+      items.push({ src, dst: src, srcName: path.basename(src), dstName: path.basename(src), status: 'invalid', reason: '不是文件或文件夹', isDir: false });
+      continue;
+    }
+    valid.push({ src, dir: path.dirname(src), isDir });
   }
 
   // 按目录统计序号
@@ -83,7 +89,7 @@ export async function buildPlan(files: string[], rules: Rule[], roots: string[])
   const dirSeen = new Map<string, number>();
 
   for (let i = 0; i < valid.length; i++) {
-    const { src, dir } = valid[i];
+    const { src, dir, isDir } = valid[i];
     const srcName = path.basename(src);
     dirSeen.set(dir, (dirSeen.get(dir) ?? 0) + 1);
 
@@ -94,23 +100,23 @@ export async function buildPlan(files: string[], rules: Rule[], roots: string[])
       dirTotal: dirCount.get(dir)!,
       dir: path.basename(dir),
       path: src,
-      meta: needMeta ? await extractMeta(src) : {},
+      meta: needMeta && !isDir ? await extractMeta(src) : {},
       random: mulberry32(hashString(src)),
     };
 
     let dstName: string;
     try {
-      dstName = applyRules(srcName, rules, ctx);
+      dstName = applyRules(srcName, rules, ctx, { isDirectory: isDir });
     } catch (e: any) {
       const reason = e instanceof RuleError ? e.message : e.message ?? '规则执行失败';
-      items.push({ src, dst: src, srcName, dstName: srcName, status: 'invalid', reason });
+      items.push({ src, dst: src, srcName, dstName: srcName, status: 'invalid', reason, isDir });
       continue;
     }
 
     const dst = path.join(dir, dstName);
 
     if (dstName === srcName) {
-      items.push({ src, dst, srcName, dstName, status: 'unchanged' });
+      items.push({ src, dst, srcName, dstName, status: 'unchanged', isDir });
       continue;
     }
 
@@ -121,11 +127,11 @@ export async function buildPlan(files: string[], rules: Rule[], roots: string[])
     else if (WINDOWS_RESERVED.test(splitName(dstName).name)) reason = '是系统保留名（如 CON、NUL）';
 
     if (reason) {
-      items.push({ src, dst, srcName, dstName, status: 'invalid', reason });
+      items.push({ src, dst, srcName, dstName, status: 'invalid', reason, isDir });
       continue;
     }
 
-    items.push({ src, dst, srcName, dstName, status: 'ok' });
+    items.push({ src, dst, srcName, dstName, status: 'ok', isDir });
   }
 
   // 冲突检测：目标名彼此重复，或目标已存在且不是本次的源文件

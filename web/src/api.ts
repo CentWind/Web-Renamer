@@ -84,9 +84,11 @@ export const api = {
   browse: (path?: string) =>
     request<BrowseResult>(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 
-  /** 递归扫描目录（含子目录）收集文件 */
-  scan: (path: string, opts: { recursive?: boolean; includeHidden?: boolean; limit?: number } = {}) =>
-    request<ScanResult>('/api/scan', { method: 'POST', ...json({ path, ...opts }) }),
+  /** 递归扫描目录（含子目录）收集文件；includeDirs=true 时也收集文件夹本身 */
+  scan: (
+    path: string,
+    opts: { recursive?: boolean; includeHidden?: boolean; includeDirs?: boolean; limit?: number } = {},
+  ) => request<ScanResult>('/api/scan', { method: 'POST', ...json({ path, ...opts }) }),
 
   preview: (files: string[], rules: Rule[]) =>
     request<PlanResult>('/api/preview', { method: 'POST', ...json({ files, rules }) }),

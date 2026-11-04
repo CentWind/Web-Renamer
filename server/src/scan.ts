@@ -21,6 +21,8 @@ export interface ScanFile {
   mtime: number;
   /** 展示路径（含根目录名），例如 `photos/2024/01/a.jpg` */
   display: string;
+  /** 是否为文件夹（includeDirs=true 时可能出现） */
+  isDir?: boolean;
 }
 
 export interface ScanResult {
@@ -36,6 +38,8 @@ export interface ScanResult {
   skipped: number;
   /** 因是隐藏文件/目录而未添加的条目数 */
   hiddenSkipped: number;
+  /** 是否包含文件夹 */
+  includeDirs: boolean;
   /** 是否因为达到 limit 上限而截断 */
   truncated: boolean;
 }
@@ -55,6 +59,8 @@ export interface ScanOptions {
   recursive?: boolean;
   /** 默认 false：跳过以 . 开头的文件/目录 */
   includeHidden?: boolean;
+  /** 默认 false：是否把文件夹本身也加入结果（用于重命名文件夹） */
+  includeDirs?: boolean;
   /** 最多收集多少个文件，默认 20000，上限 50000 */
   limit?: number;
 }
@@ -62,6 +68,7 @@ export interface ScanOptions {
 export function scanDirectory(rawPath: string | undefined, roots: string[], options: ScanOptions = {}): ScanResult {
   const recursive = options.recursive !== false;
   const includeHidden = options.includeHidden === true;
+  const includeDirs = options.includeDirs === true;
   const parsedLimit = Math.trunc(Number(options.limit ?? SCAN_DEFAULT_LIMIT));
   const limit = Math.min(Math.max(Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : SCAN_DEFAULT_LIMIT, 1), SCAN_MAX_LIMIT);
 
@@ -118,6 +125,20 @@ export function scanDirectory(rawPath: string | undefined, roots: string[], opti
         continue;
       }
       if (d.isDirectory()) {
+        // 需要重命名文件夹时，把目录本身也加入结果（根目录除外）
+        if (includeDirs) {
+          if (files.length >= limit) {
+            truncated = true;
+            break;
+          }
+          let mtime = 0;
+          try {
+            mtime = fs.statSync(full).mtimeMs;
+          } catch {
+            /* 忽略 */
+          }
+          files.push({ path: full, name: d.name, rel, size: 0, mtime, display: displayPath(full, roots), isDir: true });
+        }
         if (!recursive) continue;
         let real: string;
         try {
@@ -159,6 +180,7 @@ export function scanDirectory(rawPath: string | undefined, roots: string[], opti
     display: displayPath(dir, roots),
     recursive,
     includeHidden,
+    includeDirs,
     limit,
     files,
     skipped,

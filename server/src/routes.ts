@@ -119,11 +119,18 @@ export async function registerRoutes(app: FastifyInstance, config: AppConfig): P
    * 只读操作；跳过符号链接与特殊文件。
    */
   app.post('/api/scan', async (req, reply) => {
-    const body = (req.body ?? {}) as { path?: string; recursive?: boolean; includeHidden?: boolean; limit?: number };
+    const body = (req.body ?? {}) as {
+      path?: string;
+      recursive?: boolean;
+      includeHidden?: boolean;
+      includeDirs?: boolean;
+      limit?: number;
+    };
     try {
       return scanDirectory(body.path ?? config.roots[0], config.roots, {
         recursive: body.recursive,
         includeHidden: body.includeHidden,
+        includeDirs: body.includeDirs,
         limit: body.limit,
       });
     } catch (e: any) {

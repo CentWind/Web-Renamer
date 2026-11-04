@@ -10,6 +10,7 @@ import {
   Folder,
   FolderDown,
   FolderOpen,
+  FolderPlus,
   ListFilter,
   Trash2,
   X,
@@ -30,10 +31,12 @@ export function FileBrowser() {
   const clearQueue = useStore((s) => s.clearQueue);
   const [showHidden, setShowHidden] = useState(false);
   const [tab, setTab] = useState<'browse' | 'queue'>('browse');
+  /** 递归添加时是否同时加入文件夹本身（用于重命名文件夹） */
+  const [includeDirsForScan, setIncludeDirsForScan] = useState(false);
 
   /** 递归添加目录（含子目录）后切到「待处理」查看结果 */
   const addFolderRecursive = async (targetPath?: string) => {
-    const added = await addDirectory(targetPath);
+    const added = await addDirectory(targetPath, { includeDirs: includeDirsForScan });
     if (added > 0) setTab('queue');
   };
 
@@ -90,6 +93,18 @@ export function FileBrowser() {
             <div className="mono min-w-0 flex-1 truncate" title={browse?.path}>
               {browse?.display ?? '—'}
             </div>
+            <label
+              className="muted flex flex-none cursor-pointer items-center gap-1 text-[11px]"
+              title="递归添加时把文件夹本身也加入待处理（用于重命名文件夹）"
+            >
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-[var(--accent)]"
+                checked={includeDirsForScan}
+                onChange={(e) => setIncludeDirsForScan(e.target.checked)}
+              />
+              含文件夹
+            </label>
             <button
               className="btn btn-sm"
               disabled={filesInDir.length === 0}
@@ -101,7 +116,7 @@ export function FileBrowser() {
             <button
               className="btn btn-sm btn-primary"
               disabled={!browse || scanningDirectory}
-              title="添加当前目录及所有子目录下的文件"
+              title={includeDirsForScan ? '添加当前目录及所有子目录下的文件和文件夹' : '添加当前目录及所有子目录下的文件'}
               onClick={() => void addFolderRecursive(browse?.path)}
             >
               {scanningDirectory ? <Spinner size={13} /> : <FolderDown size={13} />} 含子目录
@@ -136,17 +151,30 @@ export function FileBrowser() {
                           <span className="muted mono flex-none text-[11px]">{formatBytes(e.size)}</span>
                         )}
                         {e.dir && (
-                          <button
-                            className="icon-btn h-6 w-6 flex-none opacity-0 group-hover:opacity-100"
-                            title="添加此目录及所有子目录下的文件"
-                            disabled={scanningDirectory}
-                            onClick={(ev) => {
-                              ev.stopPropagation();
-                              void addFolderRecursive(e.path);
-                            }}
-                          >
-                            <FolderDown size={13} />
-                          </button>
+                          <>
+                            <button
+                              className="icon-btn h-6 w-6 flex-none opacity-0 group-hover:opacity-100"
+                              title="把此文件夹加入待处理（重命名文件夹本身）"
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                addEntries([{ ...e, isDir: true }]);
+                                setTab('queue');
+                              }}
+                            >
+                              <FolderPlus size={13} />
+                            </button>
+                            <button
+                              className="icon-btn h-6 w-6 flex-none opacity-0 group-hover:opacity-100"
+                              title="添加此目录及所有子目录下的文件（含文件夹需勾选上方「含文件夹」）"
+                              disabled={scanningDirectory}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                void addFolderRecursive(e.path);
+                              }}
+                            >
+                              <FolderDown size={13} />
+                            </button>
+                          </>
                         )}
                         {inQueue && <CheckSquare size={14} style={{ color: 'var(--accent)' }} className="flex-none" />}
                       </div>
@@ -173,20 +201,24 @@ export function FileBrowser() {
               <Empty
                 icon={<FilePlus2 size={26} />}
                 title="还没有待处理的文件"
-                hint="在「浏览」里点击单个文件、点「当前目录」，或点目录右侧的按钮把整个目录（含子目录）加进来。"
+                hint="在「浏览」里点击文件/文件夹，或点「当前目录」「含子目录」把内容加进来；文件夹行的按钮可单独加入文件夹本身。"
               />
             ) : (
               <ul className="p-1.5">
                 {queue.map((q) => (
                   <li key={q.path}>
                     <div className="row-hover group flex items-center gap-2 rounded-lg px-2.5 py-1.5">
-                      <FileIcon size={15} className="muted flex-none" />
+                      {q.isDir ? (
+                        <Folder size={15} className="flex-none" style={{ color: 'var(--accent)' }} />
+                      ) : (
+                        <FileIcon size={15} className="muted flex-none" />
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[13px]" title={q.path}>
                           {q.name}
                         </div>
                         <div className="muted truncate text-[11px]" title={q.display || q.path}>
-                          {formatBytes(q.size)} · {q.display || q.path}
+                          {q.isDir ? '文件夹' : formatBytes(q.size)} · {q.display || q.path}
                         </div>
                       </div>
                       <button className="icon-btn h-6 w-6 opacity-0 group-hover:opacity-100" onClick={() => removeFromQueue(q.path)}>

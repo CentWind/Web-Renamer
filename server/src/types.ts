@@ -53,6 +53,8 @@ export interface PlanItem {
   dstName: string;
   status: PlanStatus;
   reason?: string;
+  /** 是否为文件夹（文件夹没有扩展名概念） */
+  isDir?: boolean;
   /** 展示用路径（含根目录名），例如 photos/2024/01/a.jpg */
   srcDisplay?: string;
   /** 目标文件的展示用路径 */

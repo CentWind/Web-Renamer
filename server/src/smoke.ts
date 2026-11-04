@@ -385,6 +385,127 @@ async function main() {
     ok('递归扫描 + 隐藏文件开关 + 符号链接跳过 + 上限截断 + 跨目录同名可正常改名/撤销');
   }
 
+  /* ---------- 13. 文件夹重命名（本次 fork 新增） ---------- */
+  console.log('13) 文件夹重命名（单目录 / 父子目录同批 / 文件+目录 / 撤销）');
+  {
+    // 13.1 单个文件夹改名：内部文件不受影响，撤销可还原
+    const { dir, roots } = await newWorkspace();
+    fs.mkdirSync(path.join(dir, '2024 照片'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '2024 照片', 'a.jpg'), 'x');
+    fs.writeFileSync(path.join(dir, '2024 照片', 'b.jpg'), 'x');
+
+    const folder = path.join(dir, '2024 照片');
+    const p1 = await buildPlan([folder], [rule('insert', { position: 'prefix', text: '整理_' })], roots);
+    assert.strictEqual(p1.items[0].isDir, true);
+    assert.strictEqual(p1.items[0].dstName, '整理_2024 照片');
+    assert.strictEqual(p1.summary.canApply, true);
+
+    const r1 = applyPlan(p1.items, p1.root, true);
+    assert.strictEqual(r1.failed.length, 0);
+    assert.ok(fs.existsSync(path.join(dir, '整理_2024 照片', 'a.jpg')));
+
+    const j1 = getJournal(r1.journalId!);
+    assert.ok(j1);
+    const u1 = undoJournal(j1!.entries);
+    markJournalUndone(j1!.id);
+    assert.strictEqual(u1.failed.length, 0);
+    assert.ok(fs.existsSync(path.join(dir, '2024 照片', 'b.jpg')));
+    ok('文件夹改名后内部文件保留，撤销可还原');
+
+    // 13.2 父目录 + 子目录同批改名：执行顺序必须先子后父
+    const { dir: d2, roots: r2 } = await newWorkspace();
+    fs.mkdirSync(path.join(d2, 'A', 'B'), { recursive: true });
+    fs.writeFileSync(path.join(d2, 'A', 'f.txt'), 'x');
+    fs.writeFileSync(path.join(d2, 'A', 'B', 'g.txt'), 'x');
+
+    const p2 = await buildPlan(
+      [path.join(d2, 'A'), path.join(d2, 'A', 'B')],
+      [rule('insert', { position: 'prefix', text: 'n_' })],
+      r2,
+    );
+    assert.strictEqual(p2.summary.conflict, 0);
+    assert.strictEqual(p2.summary.canApply, true);
+
+    const r2r = applyPlan(p2.items, p2.root, true);
+    assert.strictEqual(r2r.renamed.length, 2);
+    assert.strictEqual(r2r.failed.length, 0);
+    assert.ok(fs.existsSync(path.join(d2, 'n_A', 'n_B', 'g.txt')));
+    assert.ok(fs.existsSync(path.join(d2, 'n_A', 'f.txt')));
+
+    const j2 = getJournal(r2r.journalId!);
+    const u2 = undoJournal(j2!.entries);
+    markJournalUndone(j2!.id);
+    assert.strictEqual(u2.failed.length, 0);
+    assert.ok(fs.existsSync(path.join(d2, 'A', 'B', 'g.txt')));
+    ok('父目录+子目录同批改名（先子后父），撤销后恢复原结构');
+
+    // 13.3 文件夹和其中文件同批改名
+    const { dir: d3, roots: r3 } = await newWorkspace();
+    fs.mkdirSync(path.join(d3, 'P'), { recursive: true });
+    fs.writeFileSync(path.join(d3, 'P', 'file.txt'), 'x');
+
+    const p3 = await buildPlan(
+      [path.join(d3, 'P', 'file.txt'), path.join(d3, 'P')],
+      [rule('insert', { position: 'prefix', text: 'x_' })],
+      r3,
+    );
+    assert.strictEqual(p3.summary.canApply, true);
+
+    const r3r = applyPlan(p3.items, p3.root, true);
+    assert.strictEqual(r3r.failed.length, 0);
+    assert.ok(fs.existsSync(path.join(d3, 'x_P', 'x_file.txt')));
+
+    const j3 = getJournal(r3r.journalId!);
+    assert.strictEqual(undoJournal(j3!.entries).failed.length, 0);
+    markJournalUndone(j3!.id);
+    assert.ok(fs.existsSync(path.join(d3, 'P', 'file.txt')));
+    ok('文件夹与其内部文件同批改名，撤销正常');
+
+    // 13.4 扫描 includeDirs：文件夹本身也进入结果
+    const { dir: d4, roots: r4 } = await newWorkspace();
+    fs.mkdirSync(path.join(d4, 'sub1', 'sub2'), { recursive: true });
+    fs.writeFileSync(path.join(d4, 'sub1', 'a.txt'), 'x');
+    fs.writeFileSync(path.join(d4, 'sub1', 'sub2', 'b.txt'), 'x');
+
+    const scannedDirs = scanDirectory(d4, r4, { includeDirs: true });
+    assert.ok(scannedDirs.files.some((f) => f.isDir && f.rel === 'sub1'));
+    assert.ok(scannedDirs.files.some((f) => f.isDir && f.rel === 'sub1/sub2'));
+    assert.ok(scannedDirs.files.some((f) => !f.isDir && f.rel === 'sub1/a.txt'));
+    assert.strictEqual(scannedDirs.includeDirs, true);
+
+    const filesOnly = scanDirectory(d4, r4);
+    assert.ok(filesOnly.files.every((f) => !f.isDir));
+    ok('递归扫描可包含文件夹（includeDirs），默认仍只返回文件');
+
+    // 13.5 符号链接文件夹拒绝（避免逃逸与歧义）
+    let linkMade = false;
+    try {
+      fs.symlinkSync(path.join(d4, 'sub1'), path.join(d4, 'link-sub1'));
+      linkMade = true;
+    } catch {
+      /* 某些文件系统不允许符号链接，跳过该子测试 */
+    }
+    if (linkMade) {
+      const p5 = await buildPlan([path.join(d4, 'link-sub1')], [rule('insert', { position: 'prefix', text: 'x_' })], r4);
+      assert.strictEqual(p5.items[0].status, 'invalid');
+      assert.strictEqual(p5.summary.canApply, false);
+    }
+    ok('符号链接文件夹被拒绝');
+
+    // 13.6 两个文件夹撞名 → 冲突并阻止执行
+    const { dir: d6, roots: r6 } = await newWorkspace();
+    fs.mkdirSync(path.join(d6, 'A'));
+    fs.mkdirSync(path.join(d6, 'B'));
+    const p6 = await buildPlan(
+      [path.join(d6, 'A'), path.join(d6, 'B')],
+      [rule('insert', { position: 'replace', text: 'SAME' })],
+      r6,
+    );
+    assert.strictEqual(p6.summary.conflict, 2);
+    assert.strictEqual(p6.summary.canApply, false);
+    ok('文件夹撞名时阻止执行');
+  }
+
   console.log(`\n全部通过：${passed} 项\n`);
 }
 

@@ -31,6 +31,8 @@ export interface AddableEntry {
   size: number;
   /** 展示路径；缺省时回退为文件名 */
   display?: string;
+  /** 是否为文件夹 */
+  isDir?: boolean;
 }
 
 let toastSeq = 0;
@@ -84,8 +86,8 @@ interface State {
   handleUnauthorized: () => void;
   navigate: (path?: string) => Promise<void>;
   addEntries: (entries: AddableEntry[]) => void;
-  /** 递归扫描目录（含所有子目录）并加入待处理列表，返回新增文件数 */
-  addDirectory: (targetPath?: string) => Promise<number>;
+  /** 递归扫描目录（含所有子目录）并加入待处理列表，返回新增条目数 */
+  addDirectory: (targetPath?: string, options?: { includeDirs?: boolean }) => Promise<number>;
   removeFromQueue: (path: string) => void;
   clearQueue: () => void;
 
@@ -263,30 +265,32 @@ export const useStore = create<State>((set, get) => ({
         size: e.size,
         dir: e.path.slice(0, Math.max(0, e.path.length - e.name.length - 1)),
         display: e.display ?? e.name,
+        isDir: e.isDir === true,
       });
     }
     set({ queue: [...map.values()] });
   },
 
-  async addDirectory(targetPath) {
+  async addDirectory(targetPath, options) {
     const path = targetPath ?? get().browse?.path ?? get().config?.roots[0]?.path;
     if (!path) return 0;
     if (get().scanningDirectory) return 0;
     set({ scanningDirectory: true });
     try {
-      const res = await api.scan(path, { recursive: true });
+      const res = await api.scan(path, { recursive: true, includeDirs: options?.includeDirs === true });
       if (res.files.length === 0) {
-        get().toast('info', '该目录及子目录下没有可添加的文件');
+        get().toast('info', '该目录及子目录下没有可添加的条目');
         return 0;
       }
       get().addEntries(res.files);
+      const dirCount = res.files.filter((f) => f.isDir).length;
       const extra: string[] = [];
-      if (res.hiddenSkipped > 0) extra.push(`${res.hiddenSkipped} 个隐藏文件未添加`);
-      if (res.skipped > 0) extra.push(`${res.skipped} 个符号链接/无法访问的文件已跳过`);
+      if (res.hiddenSkipped > 0) extra.push(`${res.hiddenSkipped} 个隐藏条目未添加`);
+      if (res.skipped > 0) extra.push(`${res.skipped} 个符号链接/无法访问的条目已跳过`);
       if (res.truncated) extra.push(`已达 ${res.limit} 个上限，请分批处理`);
       get().toast(
         'success',
-        `已递归添加 ${res.files.length} 个文件${extra.length ? `（${extra.join('，')}）` : ''}`,
+        `已递归添加 ${res.files.length} 个条目${dirCount > 0 ? `（含 ${dirCount} 个文件夹）` : ''}${extra.length ? `，${extra.join('，')}` : ''}`,
       );
       return res.files.length;
     } catch (e: any) {
@@ -408,6 +412,7 @@ export const useStore = create<State>((set, get) => ({
             size: old?.size ?? 0,
             dir: r.to.slice(0, Math.max(0, r.to.length - name.length - 1)),
             display,
+            isDir: old?.isDir === true,
           };
         }),
       });
